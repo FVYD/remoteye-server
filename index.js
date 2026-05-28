@@ -1,11 +1,34 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { WebSocketServer } = require('ws');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' }
+});
+
+const wss = new WebSocketServer({ server, path: '/audio' });
+
+let audioClients = [];
+
+wss.on('connection', (ws) => {
+  console.log('Cliente de audio conectado');
+  audioClients.push(ws);
+
+  ws.on('message', (data) => {
+    audioClients.forEach(client => {
+      if (client !== ws && client.readyState === 1) {
+        client.send(data);
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    audioClients = audioClients.filter(c => c !== ws);
+    console.log('Cliente de audio desconectado');
+  });
 });
 
 let estadoDispositivo = {
@@ -23,12 +46,10 @@ io.on('connection', (socket) => {
     if (data.tipo === 'telefono') {
       socket.join('telefono');
       estadoDispositivo.conectado = true;
-      console.log('Telefono conectado');
       io.to('pc').emit('telefono_conectado', estadoDispositivo);
     }
     if (data.tipo === 'pc') {
       socket.join('pc');
-      console.log('PC conectada');
       socket.emit('estado_actual', estadoDispositivo);
     }
   });
@@ -68,7 +89,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('Desconectado:', socket.id);
     estadoDispositivo.conectado = false;
     io.to('pc').emit('telefono_desconectado');
   });
