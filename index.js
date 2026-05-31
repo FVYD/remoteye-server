@@ -4,30 +4,24 @@ const { Server } = require('socket.io');
 const { WebSocketServer } = require('ws');
 
 const app = express();
+app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*' }
 });
 
 const wss = new WebSocketServer({ server, path: '/audio' });
-
 let audioClients = [];
 
 wss.on('connection', (ws) => {
-  console.log('Cliente de audio conectado');
   audioClients.push(ws);
-
   ws.on('message', (data) => {
     audioClients.forEach(client => {
-      if (client !== ws && client.readyState === 1) {
-        client.send(data);
-      }
+      if (client !== ws && client.readyState === 1) client.send(data);
     });
   });
-
   ws.on('close', () => {
     audioClients = audioClients.filter(c => c !== ws);
-    console.log('Cliente de audio desconectado');
   });
 });
 
@@ -37,68 +31,60 @@ let estadoDispositivo = {
   microfonoActivo: false,
   ubicacion: 'Desconocida',
   ultimoLatido: null,
+  comandoPendiente: null,
 };
 
-io.on('connection', (socket) => {
-  console.log('Nueva conexion:', socket.id);
+// Ruta HTTP para el telefono
+app.post('/latido', (req, res) => {
+  estadoDispositivo.conectado = true;
+  estadoDispositivo.ultimoLatido = new Date().toISOString();
 
+  const comando = estadoDispositivo.comandoPendiente;
+  estadoDispositivo.comandoPendiente = null;
+
+  io.to('pc').emit('latido', { timestamp: estadoDispositivo.ultimoLatido });
+  io.to('pc').emit('telefono_conectado', estadoDispositivo);
+
+  res.json({ comando });
+});
+
+io.on('connection', (socket) => {
   socket.on('identificar', (data) => {
-    if (data.tipo === 'telefono') {
-      socket.join('telefono');
-      estadoDispositivo.conectado = true;
-      io.to('pc').emit('telefono_conectado', estadoDispositivo);
-    }
     if (data.tipo === 'pc') {
       socket.join('pc');
       socket.emit('estado_actual', estadoDispositivo);
     }
   });
 
-  socket.on('ubicacion', (data) => {
-    estadoDispositivo.ubicacion = data.lugar;
-    io.to('pc').emit('ubicacion_actualizada', data);
-  });
-
-  socket.on('latido', (data) => {
-    estadoDispositivo.ultimoLatido = new Date().toISOString();
-    io.to('pc').emit('latido', data);
-  });
-
   socket.on('activar_camara', () => {
     estadoDispositivo.camaraActiva = true;
-    io.to('telefono').emit('comando', { accion: 'activar_camara' });
+    estadoDispositivo.comandoPendiente = 'activar_camara';
     io.to('pc').emit('estado_actual', estadoDispositivo);
   });
 
   socket.on('detener_camara', () => {
     estadoDispositivo.camaraActiva = false;
-    io.to('telefono').emit('comando', { accion: 'detener_camara' });
+    estadoDispositivo.comandoPendiente = 'detener_camara';
     io.to('pc').emit('estado_actual', estadoDispositivo);
   });
 
   socket.on('activar_microfono', () => {
     estadoDispositivo.microfonoActivo = true;
-    io.to('telefono').emit('comando', { accion: 'activar_microfono' });
+    estadoDispositivo.comandoPendiente = 'activar_microfono';
     io.to('pc').emit('estado_actual', estadoDispositivo);
   });
 
   socket.on('detener_microfono', () => {
     estadoDispositivo.microfonoActivo = false;
-    io.to('telefono').emit('comando', { accion: 'detener_microfono' });
+    estadoDispositivo.comandoPendiente = 'detener_microfono';
     io.to('pc').emit('estado_actual', estadoDispositivo);
   });
 
-  socket.on('disconnect', () => {
-    estadoDispositivo.conectado = false;
-    io.to('pc').emit('telefono_desconectado');
-  });
+  socket.on('disconnect', () => {});
 });
 
 app.get('/', (req, res) => {
-  res.json({
-    status: 'Remoteye server corriendo',
-    dispositivo: estadoDispositivo
-  });
+  res.json({ status: 'Remoteye server corriendo', dispositivo: estadoDispositivo });
 });
 
 const PORT = process.env.PORT || 3000;
